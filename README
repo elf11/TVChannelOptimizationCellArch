@@ -1,0 +1,185 @@
+#########################################################################
+#
+#		NICULAESCU OANA 331 CB
+#		TEMA 4 ASC - OPTIMIZARE TV CHANNEL PREVIEW
+#########################################################################
+
+1. Scopul temei
+
+Imbunatatirea implementarii de baza ce rezolva problema celor 16
+stream-uri avi dispuse intr-o matrice 4x4 folosind arhitectura CELL.
+Stream-urile video sunt dispuse dupa cum urmeaza:
+Si = {
+    S'i-1, S'i-2, S'i-3, S'i-4 
+    S'i-5, S'i-6, S'i-7, S'i-8 
+    S'i-9, S'i-10,S'i-11,S'i-12 
+    S'i-13,S'i-14,S'i-15,S'i-16 
+}
+unde Si este frame-ul final format din cele 16 frame-uri scalate si
+vectorizate utilizand arhitectura CELL.
+Imbunatatirile aduse temei cuprind:
+ - optimizarea dimensiunii transferului
+ - double buffering
+ - liste dma
+
+2. Compilare si rulare
+
+Compilarea temei se realizeaza ruland:
+	make (in directorul principal al temei)
+Rularea temei se realizeaza ruland scriptul execute.sh si dand ca
+parametru numarul de SPU-uri pe care dorim sa rulam tema.
+	./execute.sh $NR_SPU
+
+3. Desfasurare algoritm pentru functia process_image_2lines(struct image
+*img):
+ - in functia de pe SPU process_image_2lines se iau ca input 2 linii, nu
+   doar 1 singura asa cum se intampla in cazul functiei
+process_image_simple
+ - avem nevoie de 2 vectori de output unde vom depunde rezultatul, doi
+   vectori temporari in care vom retine calculele temporare ce se
+realizeaza pe cele 2 linii de input
+ - retinem in 8 vectori cele 8 linii din imaginile simple pe care dorim
+   sa le scalam, din fiecare imagine luam cate 2 linii, apoi calculam
+vectorizand in acelasi fel in care s-a realizat vectorizarea si pentru
+functia simple noile linii ce vor fi depuse in imaginea finala
+ - vectorizarea se realizeaza cu ajutorul formulei:
+	v5[j] = spu_avg(spu_avg(v1[j], v2[j]), spu_avg(v3[j], v4[j]));
+ - avem nevoie sa depunem de 2 ori in main memory date deoarece
+   prelucram 2 linii, care sunt independente una de cealalta si in modul
+in care am gandit eu aceasta rezolvare cele 2 linii nu pot fi depuse in
+acelasi timp(de aici si cele 2 mfc_put)
+ - se elibereaza resursele utilizate
+
+4. Desfasurare algoritm pentru functia process_image_double(struct
+image *img):
+ - in functia de pe SPU process_image_double avem nevoie de 2 vectori de
+   input, unul care va fi prelucrat la momentul curent si un al doilea
+care va fi prelucrat la momentul urmator de timp, dar care va fi
+completat/datele pentru a completa acest buffer vor fi aduse la momentul
+de timp curent, cel in care se prelucreaza bufferul curent. Facem astfel
+pentru a reduce timpii morti in care nu se realizeaza niciun fel de
+prelucrare de calcul pe vector.
+ - modelul este preluat din laborator, avem nevoie de 2 tag-uri pentru a
+   face distinctie intre cele 2 buffere, structura tag_id este declarata
+global si rezervata in functia main din spu.c
+ - initial se compeleteaza primul buffer cu date, apoi intrand in bucla
+   in care se realizeaza prelucrarea intregii imagini se citeste si
+bufferul urmator, aducandu-se datele in acesta
+ - se prelucreaza datele din buffer-ul curent
+ - la final se realizeaza prelucrarea ultimului buffer.
+
+5. Desfasurare algoritm pentru functia process_image_dmalist(struct image *img):
+	- implementarea listelor dma este asemanatoare cu implementarea pentru 2 linii
+cu diferenta ca acum vom avea 8 linii nu 2, implementarea este asemanatoare cu
+cea gasita in exemplul practic 2 din laboratorul 9
+	- avem nevoie de 2 liste dma, una dintre ele are 4 elemente de lista cu cate
+8 elemente fiecare - aceasta lista va fi folosita pentru input, si cea de-a doua lista
+cu 8 elemente fiecare(atatea linii cate trebuie sa scriem la final) - practic cele
+4 elemente ale listei initiale se combina pentru a da elemente din lista finala
+	- avem nevoie de 8 vectori de iesire, in care vom salva rezultatul in urma
+operatiilor de scalare si vectorizare(dimensiunea acestor vectori este egala cu 
+dimensiunea unei linii din imaginea finala, adica dimensiunea unei linii din imaginea initiala de 
+impoartit la 4), si de 8 vectori temporari in care vom salva rezultatul de la opearatia
+de vectorizare dimensiunea acestora este egala cu dimensiunea unei linii din imaginea
+originala
+	- se initializeaza cele 2 liste, sunt luate 32 de linii cu un apel mfc_getl,
+sunt prelucrate asemanator cu prelucrarile realizate la stagiile anteriorea cu singura diferenta
+ca acum este vorba de 8 linii si se depune rezultatul cu o operatie de mfc_putl.
+
+6. Rezultatele rularii temei pentru cele 2 functii se gasesc in folderul
+Rezultate, formula utilizata pentru calculul Speed-up-ului este:
+
+	Speed-up = |T1 - T2| / T2, unde T1 = timpul implementarii de baza,
+T2 = timpul implementarii imbunatatite(2linii, double buffering, liste dma).
+
+1 SPU - 25 Frame-uri
+ - rulare normala
+ Scale time: 0.523835
+ Total time: 1.916754
+ - rulare cu 2 linii
+ Scale time: 0.382645
+ Total time: 1.681308
+ - rulare double-buffering
+ Scale time: 0.462259
+ Total time: 1.762519
+ - rulare liste-dma
+ Scale time: 0.289270
+ Total time: 1.652970
+
+Speed-up calculat utilizand timpii totali
+ Speed-up 2 linii: 0.1400(14%)
+ Speed-up double-buffering:0.0875(8%>5%)
+
+Speed-up calculat utilizand timpii de scalare
+ Speed-up 2 linii: 0.3689(36%)
+ Speed-up double-buffering:0.1332(13%)
+
+2 SPU - 100 Frame-uri
+ - rulare normala
+ Scale time: 1.109211
+ Total time: 6.843368
+ - rulare cu 2 linii
+ Scale time: 0.826179
+ Total time: 6.458723
+ - rulare double-buffering
+ Scale time: 0.979769
+ Total time: 7.018634
+ - rulare liste-dma
+ Scale time: 0.647976
+ Total time: 6.492942
+
+Speed-up calculat utilizand timpii totali
+ Speed-up 2 linii:0.09
+ Speed-up double-buffering:0.05
+
+Speed-up calculat utilizand timpii de scalare
+ Speed-up 2 linii: 0.3425(34%)
+ Speed-up double-buffering: 0.1321(13%)
+ Speed-up liste-dma: 0.7118(?)
+
+4 SPU - 100 Frame-uri
+ - rulare normala
+ Scale time: 0.680186
+ Total time: 7.222180
+ - rulare cu 2 linii
+ Scale time: 0.475696
+ Total time: 6.321030
+ - rulare double-buffering
+ Scale time: 0.550724
+ Total time: 6.289947
+ - rulare liste-dma
+ Scale time: 0.374500
+ Total time: 6.423185
+
+Speed-up calculat utilizand timpii totali
+ Speed-up 2 linii: 0.1425
+ Speed-up double-buffering: 0.1482
+
+Speed-up calculat utilizand timpii de scalare
+ Speed-up 2 linii: 0.4298(42%)
+ Speed-up double-buffering: 0.2350(23%)
+ Speed-up liste-dma: 
+
+8 SPU -100 Frame-uri
+ - rulare normala
+ Scale time: 0.346629
+ Total time: 6.601576
+ - rulare cu 2 linii
+ Scale time: 0.281150
+ Total time: 6.228585
+ - rulare double-buffering
+ Scale time: 0.308355
+ Total time: 6.104375
+ - rulare liste-dma
+ Scale time: 5.829484
+ Total time: 12.005789
+
+Speed-up calculat utilizand timpii totali
+ Speed-up 2 linii: 0.0598
+ Speed-up double-buffering:0.0899
+
+Speed-up calculat utilizand timpii de scalare
+ Speed-up 2 linii: 0.2328(23%)
+ Speed-up double-buffering: 0.1241(12%)
+ Speed-up liste-dma : nu am reusit sa obtin speed-up
+Tema a fost testata pe cluster utilizand scripturile execute.sh si run.sh.
